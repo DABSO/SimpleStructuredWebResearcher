@@ -9,20 +9,44 @@ from utils.url_utils import get_country_code_from_url
 
 @dataclass
 class ScrapedContent:
+    """
+    Data class representing scraped content from a webpage.
+
+    Attributes:
+        content (Union[str, bytes]): The actual content, either as text or binary data
+        content_type (str): MIME type of the content
+        encoding (Union[Literal["utf-8"], Literal["raw"]]): Encoding of the content
+    """
     content: Union[str, bytes]
     content_type: str
     encoding: Union[Literal["utf-8"], Literal["raw"]]
 
-class ScrapingResult(TypedDict):
-    screenshot: Optional[ScrapedContent]
-    content: Optional[ScrapedContent]
+
 
 class ProxyType(Enum):
+    """
+    Enum representing different proxy types available in ScrapingBee.
+
+    Values:
+        STANDARD: Basic proxy (lowest cost)
+        PREMIUM: Premium proxy with country selection
+        STEALTH: Most advanced proxy type (highest success rate)
+    """
     STANDARD = "standard"
     PREMIUM = "premium"
     STEALTH = "stealth"
 
 class ScrapingBeeService:
+    """
+    A singleton service class to handle web scraping operations using ScrapingBee API.
+    Implements rate limiting and various proxy strategies, error handling and a heuristic for reliable and cost efficient scraping.
+
+    Attributes:
+        client (ScrapingBeeClient): The ScrapingBee API client
+        semaphore (asyncio.Semaphore): Controls concurrent scraping operations
+        active_semaphores (int): Counter for active scraping operations
+        verbose (bool): Whether to output detailed logging
+    """
     _instance = None
     _lock = asyncio.Lock()
     
@@ -41,13 +65,32 @@ class ScrapingBeeService:
             self.initialized = True
 
     def _log(self, message: str) -> None:
-        """Helper method to print messages only when verbose is True."""
+        """
+        Helper method to print messages when verbose logging is enabled.
+
+        Args:
+            message (str): The message to log
+        """
         if self.verbose:
             print(message)
 
 
 
-    async def scrape_url(self, url: str, return_screenshot: bool = True, return_content: bool = True, max_cost: int = 10, timeout: int = 10000, **scrapingbee_params):
+    async def scrape_url(self, url: str, return_screenshot: bool = True, return_content: bool = True, max_cost: int = 10, timeout: int = 10000, **scrapingbee_params) -> Optional[List[ScrapedContent]]:
+        """
+        Scrapes a single URL using an escalating proxy strategy to maximize success rate.
+
+        Args:
+            url (str): The URL to scrape
+            return_screenshot (bool): Whether to capture a screenshot
+            return_content (bool): Whether to capture page content
+            max_cost (int): Maximum credits to spend on this URL
+            timeout (int): Request timeout in milliseconds
+            **scrapingbee_params: Additional parameters to pass to ScrapingBee API
+
+        Returns:
+            Optional[List[ScrapedContent]]: List of scraped content or None if all attempts fail
+        """
         self._log(f"\n[SCRAPE] Starting scrape for: {url}")
         
         if not (return_screenshot or return_content):
@@ -116,6 +159,21 @@ class ScrapingBeeService:
                                       return_content: bool = True, 
                                       timeout: int = 10000,
                                       **scrapingbee_params) -> Optional[List[ScrapedContent]]:
+        """
+        Internal method to perform a single scraping attempt using ScrapingBee API.
+
+        Args:
+            url (str): The URL to scrape
+            render (bool): Whether to render JavaScript
+            proxy_type (ProxyType): Type of proxy to use (STANDARD, PREMIUM, or STEALTH)
+            return_screenshot (bool): Whether to capture a screenshot
+            return_content (bool): Whether to capture page content
+            timeout (int): Request timeout in milliseconds
+            **scrapingbee_params: Additional parameters to pass to ScrapingBee API
+
+        Returns:
+            Optional[List[ScrapedContent]]: List of scraped content or None if attempt fails
+        """
         self._log(f"[SCRAPINGBEE][{url}] Starting scrape with {proxy_type} proxy")
         params = {
             "render_js": render,
@@ -200,7 +258,19 @@ class ScrapingBeeService:
     async def check_if_blocked(self, response) -> bool:
         """
         Determines if a response indicates the request was blocked.
-        Expects a ScrapingBee response which returns JSON.
+
+        Args:
+            response: ScrapingBee response object containing JSON data
+
+        Returns:
+            bool: True if the response indicates blocking, False otherwise
+
+        Notes:
+            Checks multiple indicators including:
+            - Status codes (403, 429, etc.)
+            - Blocking headers
+            - Content length
+            - Cloudflare challenges
         """
         try:
             status_code = response.status_code
@@ -244,8 +314,37 @@ class ScrapingBeeService:
             return True
 
 
-    async def scrape_urls(self, urls: List[str], return_screenshot: bool = True, return_content: bool = True, max_cost_per_page: int = 10, timeout: int = 10000) -> Dict[str, List[ScrapedContent]]:
+    async def scrape_urls(self, urls: List[str], return_screenshot: bool = True, 
+                         return_content: bool = True, max_cost_per_page: int = 10, 
+                         timeout: int = 10000) -> Dict[str, List[ScrapedContent]]:
+        """
+        Scrapes multiple URLs concurrently with rate limiting.
+
+        Args:
+            urls (List[str]): List of URLs to scrape
+            return_screenshot (bool): Whether to capture screenshots
+            return_content (bool): Whether to capture page content
+            max_cost_per_page (int): Maximum credits to spend per URL
+            timeout (int): Request timeout in milliseconds
+
+        Returns:
+            Dict[str, List[ScrapedContent]]: Dictionary mapping URLs to their scraped content
+
+        Notes:
+            Uses semaphore to control concurrent scraping operations
+            Handles failures gracefully and returns partial results
+        """
+
         async def scrape_with_semaphore(url):
+            """
+            Helper function to handle semaphore-controlled scraping of a single URL.
+
+            Args:
+                url (str): The URL to scrape
+
+            Returns:
+                Optional[List[ScrapedContent]]: Scraped content or None if scraping fails
+            """
             self._log(f"[SEMAPHORE][{url}] Waiting to acquire... (Active: {self.active_semaphores}/{self.semaphore._value})")
             async with self.semaphore:
                 self.active_semaphores += 1
