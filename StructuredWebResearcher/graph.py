@@ -17,6 +17,14 @@ from langchain_core.runnables import RunnableConfig
 
 
 def generate_queries(state: StructuredWebSearcherState):
+    """Node that generates search queries based on the target information.
+    
+    Args:
+        state: Current state containing target information and query parameters
+        
+    Returns:
+        dict: Contains 'queries' field with list of generated search queries
+    """
     print("🚩 generate_queries")
 
     print(state)
@@ -41,12 +49,28 @@ def generate_queries(state: StructuredWebSearcherState):
 
 
 def execute_queries(state: StructuredWebSearcherState):
+    """Node that executes the generated search queries using search service.
+    
+    Args:
+        state: Current state containing queries to execute
+        
+    Returns:
+        dict: Contains 'search_results' field with raw search results
+    """
     print("🚩 execute_queries")
     serper_search_service = SerperSearchService()
     search_results = serper_search_service.search_google([ {"q": query, "num": 10} for query in state.queries])
     return {"search_results": search_results}
 
 def filter_search_results(state: StructuredWebSearcherState):
+    """Node that analyzes and filters search results based on relevance and other criteria.
+    
+    Args:
+        state: Current state containing search results and filtering preferences
+        
+    Returns:
+        dict: Contains 'relevant_search_results' and potentially retry-related fields if no results found
+    """
     print("🚩 analyze_search_results")
     search_results = state.search_results
     structured_output_dict = {}
@@ -110,6 +134,14 @@ def filter_search_results(state: StructuredWebSearcherState):
 
 
 async def scrape_search_results(state: StructuredWebSearcherState):
+    """Node that scrapes content from filtered search results.
+    
+    Args:
+        state: Current state containing relevant search results to scrape
+        
+    Returns:
+        dict: Contains 'formatted_search_results' or retry-related fields if scraping fails
+    """
     print("🚩 scrape_search_results", f"scraping {len(state.relevant_search_results)} of {len(state.search_results)} search results")
     scraping_bee_service = ScrapingBeeService(max_concurrent_pages=5,verbose=True)
     skip_urls = []
@@ -147,6 +179,14 @@ async def scrape_search_results(state: StructuredWebSearcherState):
     }
 
 def summarize_content(state: StructuredWebSearcherState):
+    """Node that summarizes the scraped content.
+    
+    Args:
+        state: Current state containing formatted search results
+        
+    Returns:
+        dict: Contains 'summarized_content' field with the summary
+    """
     print("🚩 summarize_content")
     formatted_search_results = state.formatted_search_results
     prompt = load_prompt("content_summarizer_prompt.txt")
@@ -177,6 +217,14 @@ def summarize_content(state: StructuredWebSearcherState):
     return {"summarized_content": response.content}
 
 def generate_output(state: StructuredWebSearcherState):
+    """Node that generates structured output based on the processed information.
+    
+    Args:
+        state: Current state containing target information source
+        
+    Returns:
+        dict: Contains 'output' field with the final structured output
+    """
     structured_llm = state.model.with_structured_output(state.output_schema, method="json_schema")
     model_response = structured_llm.invoke([
         SystemMessage(content=load_prompt("output_generator_prompt.txt")),
@@ -190,6 +238,14 @@ def generate_output(state: StructuredWebSearcherState):
     return {"output": final_output}
 
 def prepare_target_information_source(state: StructuredWebSearcherState):
+    """Node that prepares the information source for output generation.
+    
+    Args:
+        state: Current state containing processed information
+        
+    Returns:
+        dict: Contains 'target_information_source' field with formatted message
+    """
     print("🚩 prepare_target_information_source")
     if state.needs_summarization:
         return {"target_information_source": HumanMessage(content=[
@@ -262,6 +318,11 @@ def prepare_run(state: StructuredWebSearcherState):
 
 
 def get_web_searcher_graph():
+    """Creates and returns a compiled state graph for structured web searching.
+    
+    Returns:
+        Compiled StateGraph: Graph defining the web searching workflow
+    """
     web_searcher_graph = StateGraph(state_schema=StructuredWebSearcherState)
 
     
