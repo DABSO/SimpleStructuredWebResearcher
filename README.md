@@ -46,7 +46,7 @@ config = {
     "output_schema": PricingPlanList,
     "model": ChatOpenAI(model="gpt-4", temperature=0),
     "scrape_search_results": True,
-    "summarize:scraped_contents": True,
+    "summarize_scraped_contents": True,
 }
 
 result = await structured_web_searcher.ainvoke(config)
