@@ -81,6 +81,33 @@ Implements the LangGraph workflow with nodes for:
 
 See [graph.py](StructuredWebResearcher/graph.py) for the full implementation.
 
+## API Specification
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | `BaseChatModel` | Required | LLM model instance (must support structured output) |
+| `output_schema` | `Any` | Required | Pydantic model defining the output structure |
+| `target_information` | `str` | Required | Description of information to extract |
+| `queries` | `List[str]` | `None` | Pre-defined search queries (auto-generated if None) |
+| `summarize_scraped_contents` | `bool` | `True` | Whether to summarize scraped content |
+| `needs_formatting` | `bool` | `True` | Whether to format final output |
+| `scrape_search_results` | `bool` | `True` | Whether to scrape search results |
+| `max_retries` | `int` | `3` | Maximum retry attempts |
+| `num_queries` | `int` | `1` | Number of search queries to generate |
+| `num_results_per_query` | `int` | `10` | Number of results per search query |
+| `top_p_search_results` | `float` | `1.0` | Proportion of results to scrape |
+| `include_unofficial_sources` | `bool` | `True` | Include non-official sources |
+| `include_outdated_sources` | `bool` | `False` | Include potentially outdated sources |
+| `prefer_official_sources` | `bool` | `True` | Prioritize official sources |
+| `only_relevant_sources` | `bool` | `True` | Filter out irrelevant sources |
+| `scraping_batch_size` | `int` | `10` | Number of URLs to scrape in parallel |
+| `scraping_timeout` | `int` | `20000` | Scraping timeout in milliseconds |
+| `max_cost_per_scrape` | `int` | `10` | Maximum credits per scrape operation |
+| `scrapingbee_concurrency_limit` | `int` | `5` | Max concurrent ScrapingBee requests |
+| `return_scraped_screenshots` | `bool` | `True` | Include screenshots in results |
+| `max_chars_per_scraped_source` | `int` | `5000` | Character limit per scraped source |
+| `max_images_per_scraped_source` | `int` | `10` | Image limit per scraped source |
+
 ## Limitations
 
 - Relies on external APIs that may have rate limits/costs
