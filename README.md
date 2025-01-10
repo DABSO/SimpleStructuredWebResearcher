@@ -85,8 +85,8 @@ See [graph.py](StructuredWebResearcher/graph.py) for the full implementation.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `BaseChatModel` | Required | LLM model instance (must support structured output) |
-| `output_schema` | `Any` | Required | Pydantic model defining the output structure |
+| `model` | `BaseChatModel` | Required | LLM model instance (must support structured output with json schema) |
+| `output_schema` | `Any` | Required | Pydantic model or json schema defining the output structure |
 | `target_information` | `str` | Required | Description of information to extract |
 | `queries` | `List[str]` | `None` | Pre-defined search queries (auto-generated if None) |
 | `summarize_scraped_contents` | `bool` | `True` | Whether to summarize scraped content |
