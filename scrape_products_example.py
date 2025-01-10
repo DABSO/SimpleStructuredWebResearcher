@@ -20,9 +20,9 @@ config = {
     "target_information": "Current yearly plans of lovable dev", 
     "output_schema": PricingPlanList, 
     "model": ChatOpenAI(model="gpt-4o-mini", temperature=0, top_p=0.1),
-    "needs_scraping": True,
+    "scrape_search_results": True,
     "max_cost_per_scrape": 5,
-    "needs_summarization": True,
+    "summarize_scraped_contents": True,
 
     "top_p_search_results": 0.8,
     "prefer_official_sources": True,

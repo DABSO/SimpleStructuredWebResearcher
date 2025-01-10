@@ -6,9 +6,10 @@ from typing import Union, Dict, Any
 
 from bs4 import BeautifulSoup
 
-
+from utils.logging import _log
 from bs4 import NavigableString
 from utils.conversion_utils import convert2message_parts
+
 
 # TODO: Refactor this
 
@@ -63,23 +64,24 @@ def format_sources(
     sources: Dict[str, List[ScrapedContent]],
     search_results: Union[Dict[str, Any], List[Dict[str, Any]]],
     max_chars_per_source: int = 5000,
-    max_images_per_source: int = 5
+    max_images_per_source: int = 5,
+    verbose: bool = True
 ) -> List[Dict[str, Any]]:
     """
     Returns a list of Message-Parts.
     """
-    print("\n=== Starting format_sources ===")
+    _log("\n=== Starting format_sources ===", verbose=verbose)
 
     
     message_parts: List[Dict[str, Any]] = []
 
     # Process organic results
     for idx, item in enumerate(search_results):
-        print(f"\n--- Processing organic result {idx + 1}/{len(search_results)} ---")
+        _log(f"\n--- Processing organic result {idx + 1}/{len(search_results)} ---", verbose=verbose)
         
         url = item.get("link")
         if not url:
-            print("-> Skipping: No URL found in result")
+            _log("-> Skipping: No URL found in result", verbose=verbose)
             continue
 
         message_parts.append({
@@ -87,9 +89,9 @@ def format_sources(
             "text": "URL: " + url
         })
 
-        print(f"-> Processing URL: {url}")
+        _log(f"-> Processing URL: {url}", verbose=verbose)
         scraped_contents = sources.get(url, [])
-        print(f"-> Found {len(scraped_contents)} scraped content items")
+        _log(f"-> Found {len(scraped_contents)} scraped content items", verbose=verbose )
 
         snippet = item.get("snippet")
         if snippet:
@@ -101,7 +103,7 @@ def format_sources(
         scraped_contents = sources.get(url, [])
         
         if not scraped_contents:
-            print("-> Skipping: No scraped content found")
+            _log("-> Skipping: No scraped content found", verbose=verbose)
             message_parts.append({
                 "type": "text",
                 "text": "No scraped content found for URL " 
@@ -115,7 +117,7 @@ def format_sources(
             
         temp_list = []
         for sc_idx, sc in enumerate(scraped_contents):
-            print(f"-> Converting scraped content {sc_idx + 1}/{len(scraped_contents)}")
+            _log(f"-> Converting scraped content {sc_idx + 1}/{len(scraped_contents)}", verbose=verbose)
             converted_parts = convert2message_parts(sc)
             if sc.content_type == "text/html":
                 # parse with beautifulsoup and get the text 
@@ -126,7 +128,7 @@ def format_sources(
         text_parts = [part for part in temp_list if part["type"] == "text"]
         non_text_parts = [part for part in temp_list if part["type"] != "text"]
         
-        print(f"-> Conversion resulted in {len(text_parts)} text parts and {len(non_text_parts)} non-text parts")
+        _log(f"-> Conversion resulted in {len(text_parts)} text parts and {len(non_text_parts)} non-text parts", verbose=verbose)
         
         # Process text parts
         sum_chars = 0
@@ -136,7 +138,7 @@ def format_sources(
             text_length = len(add_part["text"])
             
             if sum_chars + text_length > max_chars_per_source:
-                print(f"-> Truncating text part to fit max_chars (current: {sum_chars}, adding: {text_length})")
+                _log(f"-> Truncating text part to fit max_chars (current: {sum_chars}, adding: {text_length})", verbose=verbose)
                 remaining_chars = max_chars_per_source - sum_chars
                 add_part["text"] = add_part["text"][:remaining_chars]
                 sum_chars = max_chars_per_source
@@ -150,7 +152,7 @@ def format_sources(
         added_non_text = min(len(non_text_parts), max_images_per_source)
         message_parts.extend(non_text_parts[:max_images_per_source] + [{"type": "text", "text": "\n-------\n"}])
         
-        print(f"-> Added {added_text_parts} text parts ({sum_chars} chars) and {added_non_text} non-text parts")
+        _log(f"-> Added {added_text_parts} text parts ({sum_chars} chars) and {added_non_text} non-text parts", verbose=verbose)
 
-    print(f"\n=== Finished format_sources: {len(message_parts)} total message parts ===\n")
+    _log(f"\n=== Finished format_sources: {len(message_parts)} total message parts ===\n", verbose=verbose)
     return message_parts

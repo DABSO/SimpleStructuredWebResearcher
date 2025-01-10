@@ -23,3 +23,4 @@ def get_next_urls_to_scrape(state: StructuredWebSearcherState, skip_urls: List[s
 
     relevant_search_results = scrape_candidates[:scraping_batch_size]
     return [result["link"] for result in relevant_search_results]
+

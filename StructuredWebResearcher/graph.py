@@ -6,14 +6,12 @@ from services.ScrapingBeeService import ScrapingBeeService
 import yaml
 from utils.formatting_utils import format_sources
 from utils.type_checking_utils import is_pydantic_model
-import os
-from urllib.parse import urlparse
-from datetime import datetime
+from utils.logging import _log
 from .utils import load_prompt, get_next_urls_to_scrape
 from pydantic import create_model
-from typing import List
 import re
-from langchain_core.runnables import RunnableConfig
+import json
+
 
 
 def generate_queries(state: StructuredWebSearcherState):
@@ -25,9 +23,8 @@ def generate_queries(state: StructuredWebSearcherState):
     Returns:
         dict: Contains 'queries' field with list of generated search queries
     """
-    print("🚩 generate_queries")
-
-    print(state)
+    _log("🚩 generate_queries", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
 
     query_generator_prompt = load_prompt("query_generator_prompt.txt")
     structured_model = state.model.with_structured_output(QueryGeneratorOutputSchema, method="json_schema")
@@ -43,6 +40,8 @@ def generate_queries(state: StructuredWebSearcherState):
     ])
   
     queries = [query.query for query in response.selected_and_refined_queries]
+    _log("model output:", verbose=state.verbose)
+    _log(response.model_dump_json(indent=2), verbose=state.verbose)
 
     return {"queries": queries}
 
@@ -57,9 +56,10 @@ def execute_queries(state: StructuredWebSearcherState):
     Returns:
         dict: Contains 'search_results' field with raw search results
     """
-    print("🚩 execute_queries")
+    _log("🚩 execute_queries", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
     serper_search_service = SerperSearchService()
-    search_results = serper_search_service.search_google([ {"q": query, "num": 10} for query in state.queries])
+    search_results = serper_search_service.search_google([ {"q": query, "num": state.num_results_per_query} for query in state.queries])
     return {"search_results": search_results}
 
 def filter_search_results(state: StructuredWebSearcherState):
@@ -71,7 +71,8 @@ def filter_search_results(state: StructuredWebSearcherState):
     Returns:
         dict: Contains 'relevant_search_results' and potentially retry-related fields if no results found
     """
-    print("🚩 analyze_search_results")
+    _log("🚩 analyze_search_results", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
     search_results = state.search_results
     structured_output_dict = {}
     for search_result in search_results:
@@ -87,15 +88,14 @@ def filter_search_results(state: StructuredWebSearcherState):
             "search_results": search_results
         }))
     ])
-    print("model output")
-    print(model_output.model_dump_json())
+    _log("model output:", verbose=state.verbose)
+    _log(model_output.model_dump_json(indent=2), verbose=state.verbose)
 
 
     response_dict = model_output.model_dump()
 
   
     for search_result in search_results:
-        print(search_result["property_name"])
         # map back and assign the score to the search result
         if search_result["property_name"] in response_dict:
             search_result["score"] = response_dict[search_result["property_name"]]["relevance_score"]
@@ -126,6 +126,8 @@ def filter_search_results(state: StructuredWebSearcherState):
         state.retries += 1
         state.failed_queries.extend(state.queries)
         state.queries = None # reset queries
+        state.errors.append("No relevant search results found")
+        _log("No relevant search results found", verbose=state.verbose)
         return {"relevant_search_results": filtered_search_results, "retries": state.retries, "failed_queries": state.failed_queries, "queries": state.queries}
  
 
@@ -142,12 +144,14 @@ async def scrape_search_results(state: StructuredWebSearcherState):
     Returns:
         dict: Contains 'formatted_search_results' or retry-related fields if scraping fails
     """
-    print("🚩 scrape_search_results", f"scraping {len(state.relevant_search_results)} of {len(state.search_results)} search results")
-    scraping_bee_service = ScrapingBeeService(max_concurrent_pages=5,verbose=True)
+    _log("🚩 scrape_search_results", verbose=state.verbose)
+    _log(f"scraping {len(state.relevant_search_results)} of {len(state.search_results)} search results", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
+    scraping_bee_service = ScrapingBeeService(max_concurrent_pages=state.scrapingbee_concurrency_limit,verbose=state.verbose)
     skip_urls = []
     scraped_results = {}
     while True:
-        print("scraping next batch")
+        _log("scraping next batch", verbose=state.verbose)
         # stop scraping if we have enough results
         if len(scraped_results.keys()) >= len(state.relevant_search_results) * state.top_p_search_results:
             break
@@ -158,7 +162,9 @@ async def scrape_search_results(state: StructuredWebSearcherState):
         scraped_results.update(await scraping_bee_service.scrape_urls(
             next_urls_to_scrape, 
             max_cost_per_page=state.max_cost_per_scrape,
-            timeout=state.scraping_timeout
+            timeout=state.scraping_timeout,
+            return_screenshot=state.return_scraped_screenshots
+
         ))
         skip_urls.extend(next_urls_to_scrape)
 
@@ -168,11 +174,13 @@ async def scrape_search_results(state: StructuredWebSearcherState):
         state.retries += 1
         state.failed_queries.extend(state.queries)
         state.queries = None # reset queries
+        state.errors.append("Scraping failed for all search results")
+        _log("Scraping failed for all search results", verbose=state.verbose)
         return {"all_scrapes_failed": state.all_scrapes_failed, "retries": state.retries, "failed_queries": state.failed_queries, "queries": state.queries}
 
   
     
-    formatted_search_results = format_sources(scraped_results, state.relevant_search_results)
+    formatted_search_results = format_sources(scraped_results, state.relevant_search_results, max_chars_per_source=state.max_chars_per_scraped_source, max_images_per_source=state.max_images_per_scraped_source, verbose=state.verbose)
 
     return {
         "formatted_search_results": formatted_search_results,
@@ -187,7 +195,8 @@ def summarize_content(state: StructuredWebSearcherState):
     Returns:
         dict: Contains 'summarized_content' field with the summary
     """
-    print("🚩 summarize_content")
+    _log("🚩 summarize_content", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
     formatted_search_results = state.formatted_search_results
     prompt = load_prompt("content_summarizer_prompt.txt")
     
@@ -200,7 +209,7 @@ def summarize_content(state: StructuredWebSearcherState):
                 "text": yaml.dump({
                     "target_information": state.target_information,
                     "additional_instructions": state.additional_summarizer_instructions,
-                    "focus on this information": state.output_schema.model_json_schema() if is_pydantic_model(state.output_schema) else None,
+                    "focus on this information": state.output_schema.model_json_schema() if is_pydantic_model(state.output_schema) else state.output_schema,
                 })
             }, 
             {
@@ -211,12 +220,12 @@ def summarize_content(state: StructuredWebSearcherState):
         ])]
     )
 
-    print("summarized content")
-    print(response.content)
+    _log("model output:", verbose=state.verbose)
+    _log(json.dumps(response.content, indent=2) if isinstance(response.content, dict) else response.content, verbose=state.verbose)
  
     return {"summarized_content": response.content}
 
-def generate_output(state: StructuredWebSearcherState):
+def generate_structured_output(state: StructuredWebSearcherState):
     """Node that generates structured output based on the processed information.
     
     Args:
@@ -225,6 +234,8 @@ def generate_output(state: StructuredWebSearcherState):
     Returns:
         dict: Contains 'output' field with the final structured output
     """
+    _log("🚩 generate_structured_output", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
     structured_llm = state.model.with_structured_output(state.output_schema, method="json_schema")
     model_response = structured_llm.invoke([
         SystemMessage(content=load_prompt("output_generator_prompt.txt")),
@@ -235,6 +246,31 @@ def generate_output(state: StructuredWebSearcherState):
     else:
         final_output = model_response
 
+    _log("model output:", verbose=state.verbose)
+    _log(json.dumps(final_output, indent=2) if isinstance(final_output, dict) else final_output, verbose=state.verbose)
+        
+
+    return {"output": final_output}
+
+def generate_unstructured_output(state: StructuredWebSearcherState):
+    """Node that generates unstructured output based on the processed information.
+    
+    Args:
+        state: Current state containing processed information
+        
+    Returns:
+        dict: Contains 'output' field with the unstructured output
+    """
+    _log("🚩 generate_unstructured_output", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
+    final_output = state.model.invoke(
+            [
+                SystemMessage(content=load_prompt("output_generator_prompt.txt")),
+                state.target_information_source 
+            ]
+        )
+    _log("model output:", verbose=state.verbose)
+    _log(json.dumps(final_output.content, indent=2) if isinstance(final_output.content, dict) else final_output.content, verbose=state.verbose)
     return {"output": final_output}
 
 def prepare_target_information_source(state: StructuredWebSearcherState):
@@ -246,21 +282,21 @@ def prepare_target_information_source(state: StructuredWebSearcherState):
     Returns:
         dict: Contains 'target_information_source' field with formatted message
     """
-    print("🚩 prepare_target_information_source")
-    if state.needs_summarization:
+    _log("🚩 prepare_target_information_source", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
+    if state.summarize_scraped_contents and state.scrape_search_results:
         return {"target_information_source": HumanMessage(content=[
             {
                 "type": "text",
                 "text": yaml.dump({
                     "target_information": state.target_information,
                     "additional_instructions": state.additional_formatting_instructions,
-                    "output_schema": state.output_schema.model_json_schema() if is_pydantic_model(state.output_schema) else None,
+                    "output_schema": state.output_schema.model_json_schema() if is_pydantic_model(state.output_schema) else state.output_schema,
                     "summarized_content": state.summarized_content
                 })
             }
         ])}
-    elif state.needs_scraping:
-        print("🚩 prepare_target_information_source", "scraping")
+    elif state.scrape_search_results:
         message = HumanMessage(content=[ 
             {
                 "type": "text",
@@ -284,7 +320,8 @@ def prepare_target_information_source(state: StructuredWebSearcherState):
    
     
 def check_starting_point(state: StructuredWebSearcherState):
-    print("🚩 check_starting_point")
+    _log("🚩 check_starting_point", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
     if state.retries >= state.max_retries:
         return "max_retries_reached"
     
@@ -294,27 +331,36 @@ def check_starting_point(state: StructuredWebSearcherState):
     return "has_queries"
 
 def check_is_summarizing_necessary(state: StructuredWebSearcherState):
-    print("🚩 check_is_summarizing_necessary")
+    _log("🚩 check_is_summarizing_necessary", verbose=state.verbose)
+    
     if state.all_scrapes_failed:
+        _log("all_scrapes_failed", verbose=state.verbose)
         return "all_scrapes_failed"
-    return "needs_summarization" if state.needs_summarization else "skip_summarization"
+    _log("summarize_scraped_contents" if state.summarize_scraped_contents else "skip_summarization", verbose=state.verbose)
+    return "summarize_scraped_contents" if state.summarize_scraped_contents else "skip_summarization"
 
 def check_is_scraping_necessary(state: StructuredWebSearcherState):
-    print("🚩 check_is_scraping_necessary")
-    return "requires_scraping" if state.needs_scraping else "skip_scraping"
+    _log("🚩 check_is_scraping_necessary", verbose=state.verbose)
+    _log("scrape" if state.scrape_search_results else "skip_scraping", verbose=state.verbose)
+    return "requires_scraping" if state.scrape_search_results else "skip_scraping"
 
 def check_has_relevant_search_results(state: StructuredWebSearcherState):
-    print("🚩 check_has_relevant_search_results")
+    _log("🚩 check_has_relevant_search_results", verbose=state.verbose)
+
     return "has_results" if len(state.relevant_search_results) > 0 else "no_results"
 
-def check_has_accomplished_goal(state: StructuredWebSearcherState):
-    print("🚩 check_has_accomplished_goal")
-    return state.output is not None
+
 
 def prepare_run(state: StructuredWebSearcherState):
-    print("🚩 prepare_run")
-    return {}
+    _log("🚩 prepare_run", verbose=state.verbose)
+    _log(state.model_dump(), verbose=state.verbose)
+    # reset all_scrapes_failed flag
+    return {"all_scrapes_failed": False}
 
+def check_is_formatting_necessary(state: StructuredWebSearcherState):
+    _log("🚩 check_is_formatting_necessary", verbose=state.verbose)
+    _log("needs_formatting" if state.needs_formatting else "skip_formatting", verbose=state.verbose)
+    return "needs_formatting" if state.needs_formatting else "skip_formatting"
 
 
 def get_web_searcher_graph():
@@ -332,10 +378,11 @@ def get_web_searcher_graph():
     web_searcher_graph.add_node("execute_queries", execute_queries)
     
     web_searcher_graph.add_node("filter_search_results", filter_search_results)
-    web_searcher_graph.add_node("scrape_search_results", scrape_search_results)
+    web_searcher_graph.add_node("scrape", scrape_search_results)
     web_searcher_graph.add_node("prepare_target_information_source", prepare_target_information_source)
     web_searcher_graph.add_node("summarize_content", summarize_content)
-    web_searcher_graph.add_node("generate_output", generate_output)
+    web_searcher_graph.add_node("generate_structured_output", generate_structured_output)
+    web_searcher_graph.add_node("generate_unstructured_output", generate_unstructured_output)
 
     web_searcher_graph.add_edge( START, "prepare_run")
 
@@ -355,22 +402,27 @@ def get_web_searcher_graph():
     web_searcher_graph.add_conditional_edges(
         "filter_search_results", 
         check_has_relevant_search_results, 
-        {"has_results": "scrape_search_results", "no_results": "prepare_run"}
+        {"has_results": "scrape", "no_results": "prepare_run"}
     )
 
 
     
     web_searcher_graph.add_conditional_edges(
-        "scrape_search_results", 
+        "scrape", 
         check_is_summarizing_necessary, 
-        {"needs_summarization": "summarize_content", "skip_summarization": "prepare_target_information_source", "all_scrapes_failed": "prepare_run"}
+        {"summarize_scraped_contents": "summarize_content", "skip_summarization": "prepare_target_information_source", "all_scrapes_failed": "prepare_run"}
     )
 
     web_searcher_graph.add_edge("summarize_content", "prepare_target_information_source")
 
 
-    web_searcher_graph.add_edge("prepare_target_information_source", "generate_output")
-    web_searcher_graph.add_edge("generate_output", END)
+    web_searcher_graph.add_conditional_edges(
+        "prepare_target_information_source", 
+        check_is_formatting_necessary, 
+        {"needs_formatting": "generate_structured_output", "skip_formatting": "generate_unstructured_output"}
+    )
+    web_searcher_graph.add_edge("generate_structured_output", END)
+    web_searcher_graph.add_edge("generate_unstructured_output", END)
     
 
     return web_searcher_graph.compile()
