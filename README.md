@@ -45,9 +45,8 @@ config = {
     "target_information": "Current yearly plans of lovable dev",
     "output_schema": PricingPlanList,
     "model": ChatOpenAI(model="gpt-4", temperature=0),
-    "needs_scraping": True,
-    "needs_summarization": True,
-    "prefer_official_sources": True
+    "scrape_search_results": True,
+    "summarize:scraped_contents": True,
 }
 
 result = await structured_web_searcher.ainvoke(config)
